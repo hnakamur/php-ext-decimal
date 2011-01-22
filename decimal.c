@@ -108,6 +108,11 @@ const zend_function_entry decimal_number_class_functions[] = {
     PHP_ME(Decimal, __toString, NULL, ZEND_ACC_PUBLIC)
     PHP_ME(Decimal, abs, arginfo_number_unary, ZEND_ACC_PUBLIC)
     PHP_ME(Decimal, add, arginfo_number_binary, ZEND_ACC_PUBLIC)
+    PHP_ME(Decimal, and, arginfo_number_binary, ZEND_ACC_PUBLIC)
+    PHP_ME(Decimal, compare, arginfo_number_binary, ZEND_ACC_PUBLIC)
+    PHP_ME(Decimal, compareSignal, arginfo_number_binary, ZEND_ACC_PUBLIC)
+    PHP_ME(Decimal, compareTotal, arginfo_number_binary, ZEND_ACC_PUBLIC)
+    PHP_ME(Decimal, compareTotalMag, arginfo_number_binary, ZEND_ACC_PUBLIC)
     PHP_ME(Decimal, divide, arginfo_number_binary, ZEND_ACC_PUBLIC)
     PHP_ME(Decimal, divideInteger, arginfo_number_binary, ZEND_ACC_PUBLIC)
     PHP_ME(Decimal, exp, arginfo_number_unary, ZEND_ACC_PUBLIC)
@@ -127,6 +132,7 @@ const zend_function_entry decimal_number_class_functions[] = {
     PHP_ME(Decimal, nextToward, arginfo_number_binary, ZEND_ACC_PUBLIC)
     PHP_ME(Decimal, or, arginfo_number_binary, ZEND_ACC_PUBLIC)
     PHP_ME(Decimal, plus, arginfo_number_unary, ZEND_ACC_PUBLIC)
+    PHP_ME(Decimal, power, arginfo_number_binary, ZEND_ACC_PUBLIC)
     PHP_ME(Decimal, quantize, arginfo_number_binary, ZEND_ACC_PUBLIC)
     PHP_ME(Decimal, remainder, arginfo_number_binary, ZEND_ACC_PUBLIC)
     PHP_ME(Decimal, remainderNear, arginfo_number_binary, ZEND_ACC_PUBLIC)
@@ -152,6 +158,7 @@ const zend_function_entry decimal_number_class_functions[] = {
     PHP_ME(Decimal, isSubnormal, NULL, ZEND_ACC_PUBLIC)
     PHP_ME(Decimal, isZero, NULL, ZEND_ACC_PUBLIC)
     PHP_ME(Decimal, reduce, arginfo_number_binary, ZEND_ACC_PUBLIC)
+    PHP_ME(Decimal, toEngString, NULL, ZEND_ACC_PUBLIC)
     PHP_ME(Decimal, trim, NULL, ZEND_ACC_PUBLIC)
     {NULL, NULL, NULL}
 };
@@ -252,8 +259,8 @@ static decimal_number_object *decimal_convert_zval_to_number(zval *zarg,
             TSRMLS_CC);
 	case IS_OBJECT:
 		if (instanceof_function(Z_OBJCE_P(zarg), decimal_ce_Decimal
-            TSRMLS_CC))
-        {
+            TSRMLS_CC)
+        ) {
             return decimal_get_number_obj(zarg);
         }
 	}
@@ -268,7 +275,7 @@ static int decimal_convert_arg_to_number(zval *zarg, int arg_pos,
     if (*number_obj == NULL) {
 		zend_error(E_WARNING, "%s() expects parameter %d to be %s, %s given",
 			get_active_function_name(TSRMLS_C), arg_pos,
-			"resource(Decimal) or String", zend_zval_type_name(zarg));
+			"Decimal or String", zend_zval_type_name(zarg));
 		return FAILURE;
     }
     return SUCCESS;
@@ -367,7 +374,7 @@ static void decimal_apply_binary(decimal_binary_func_t func,
 {
     zval *za, *zcontext;
     decimal_context_object *context_obj;
-    decimal_number_object *this_obj, *b_obj, *result_obj;
+    decimal_number_object *this_obj, *a_obj, *result_obj;
     zend_object_value result_ov;
     zval *zretval;
 
@@ -379,7 +386,7 @@ static void decimal_apply_binary(decimal_binary_func_t func,
 
     this_obj = decimal_get_number_obj(getThis());
     context_obj = decimal_get_context_obj(ZEND_NUM_ARGS() < 1, zcontext);
-    if (decimal_convert_arg_to_number(za, 1, context_obj, &b_obj TSRMLS_CC)
+    if (decimal_convert_arg_to_number(za, 1, context_obj, &a_obj TSRMLS_CC)
         == FAILURE
     ) {
         RETURN_NULL();
@@ -388,7 +395,42 @@ static void decimal_apply_binary(decimal_binary_func_t func,
     result_obj = decimal_number_new_result(context_obj->context->digits,
         &result_ov TSRMLS_CC);
     result_obj->number = func(result_obj->number, this_obj->number,
-        b_obj->number, context_obj->context);
+        a_obj->number, context_obj->context);
+    RETURN_DECIMAL(zretval, result_ov);
+}
+
+static void decimal_apply_ternary(decimal_ternary_func_t func,
+    INTERNAL_FUNCTION_PARAMETERS)
+{
+    zval *za, *zb, *zcontext;
+    decimal_context_object *context_obj;
+    decimal_number_object *this_obj, *a_obj, *b_obj, *result_obj;
+    zend_object_value result_ov;
+    zval *zretval;
+
+    if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "zz|O",
+        &za, &zb, &zcontext, decimal_ce_DecimalContext) == FAILURE
+    ) {
+        RETURN_NULL();
+    }
+
+    this_obj = decimal_get_number_obj(getThis());
+    context_obj = decimal_get_context_obj(ZEND_NUM_ARGS() < 1, zcontext);
+    if (decimal_convert_arg_to_number(za, 1, context_obj, &a_obj TSRMLS_CC)
+        == FAILURE
+    ) {
+        RETURN_NULL();
+    }
+    if (decimal_convert_arg_to_number(zb, 2, context_obj, &b_obj TSRMLS_CC)
+        == FAILURE
+    ) {
+        RETURN_NULL();
+    }
+
+    result_obj = decimal_number_new_result(context_obj->context->digits,
+        &result_ov TSRMLS_CC);
+    result_obj->number = func(result_obj->number, this_obj->number,
+        a_obj->number, b_obj->number, context_obj->context);
     RETURN_DECIMAL(zretval, result_ov);
 }
 
@@ -908,7 +950,7 @@ PHP_METHOD(Decimal, trim)
 /* }}} */
 
 /* {{{ proto Decimal::__toString()
-   convert Decimal object to string
+   convert Decimal object to a string
 */
 PHP_METHOD(Decimal, __toString)
 {
@@ -923,6 +965,30 @@ PHP_METHOD(Decimal, __toString)
     tmp_size = number->digits + 14;
     buf = emalloc(tmp_size);
     buf = decNumberToString(number, buf);
+    actual_size = strlen(buf) + 1;
+    if (actual_size != tmp_size) {
+        buf = erealloc(buf, actual_size);
+    }
+    RETURN_STRING(buf, 0);
+}
+
+/* {{{ proto Decimal::toEngString()
+   convert Decimal object to a string using engineering notation if an exponent
+   is needed.
+*/
+PHP_METHOD(Decimal, toEngString)
+{
+    decimal_number_object *number_obj;
+    decNumber *number;
+    char *buf;
+    size_t tmp_size, actual_size;
+
+    number_obj = (decimal_number_object *)zend_object_store_get_object(
+        getThis() TSRMLS_CC);
+    number = number_obj->number;
+    tmp_size = number->digits + 14;
+    buf = emalloc(tmp_size);
+    buf = decNumberToEngString(number, buf);
     actual_size = strlen(buf) + 1;
     if (actual_size != tmp_size) {
         buf = erealloc(buf, actual_size);
@@ -1119,7 +1185,7 @@ PHP_METHOD(DecimalContext, __construct)
 /* }}} */
 
 
-/* {{{ proto DecimalContext::getDefault()
+/* {{{ proto DecimalContext::getDefaultContext()
    Returns the default DecimalContext
 */
 PHP_METHOD(DecimalContext, getDefaultContext)
